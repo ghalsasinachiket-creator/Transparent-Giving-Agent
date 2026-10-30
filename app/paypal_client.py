@@ -8,6 +8,9 @@ import requests
 # move Decision/Verdict into models.py and import from there instead.
 from rules_engine import Decision, Verdict
 
+from dotenv import load_dotenv
+load_dotenv()   # finds .env by searching from this file's folder upward
+
 BASE = "https://api-m.sandbox.paypal.com"   # sandbox ONLY, never the live URL
 CLIENT_ID = os.environ["PAYPAL_CLIENT_ID"]       # from your .env / Render env vars
 CLIENT_SECRET = os.environ["PAYPAL_CLIENT_SECRET"]
