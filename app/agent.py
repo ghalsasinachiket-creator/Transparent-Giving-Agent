@@ -3,6 +3,7 @@ It never imports rules_engine, so it cannot influence any approve/flag/block."""
 from __future__ import annotations
 import difflib
 import json
+import re
 import os
 import requests
 from groq import Groq
@@ -41,27 +42,43 @@ def _ask_llm(intent: str) -> dict:
     return json.loads(resp.choices[0].message.content)
 
 
-def _resolve(name: str) -> dict | None:
-    """Look the proposed name up in the real nonprofit registry.
-    A hallucinated charity finds no match and is dropped here, so it never
-    reaches the rules engine. We keep the registry's name so any mismatch
-    between what the LLM said and what the registry holds stays visible."""
-    try:
-        r = requests.get(SEARCH, params={"q": name}, timeout=10)
-        r.raise_for_status()
-        orgs = r.json().get("organizations", [])[:5]
-    except requests.RequestException:
-        return None
+_NOISE = {"inc", "the", "of", "and", "foundation", "fund",
+          "international", "usa", "incorporated"}
 
-    def score(o: dict) -> float:                          # fuzzy name similarity, 0..1
-        return difflib.SequenceMatcher(None, name.lower(), o["name"].lower()).ratio()
+def _norm(s: str) -> str:
+    """Normalise a charity name so brand and legal forms compare fairly."""
+    s = s.lower()
+    s = re.sub(r"\.(org|com|net)\b", "", s)     # "water.org" -> "water"
+    s = re.sub(r"[^a-z0-9 ]", " ", s)           # punctuation -> spaces
+    return " ".join(w for w in s.split() if w not in _NOISE)
+
+
+def _resolve(name: str) -> dict | None:
+    """Find the charity in the real registry, or return None.
+    Strict on purpose: a wrong match would pay the wrong charity,
+    so 'not found' is always better than a guess."""
+    wanted = _norm(name)
+    orgs, seen = [], set()
+    for q in (name, wanted):                     # try the raw name, then the cleaned one
+        if not q:
+            continue
+        try:
+            r = requests.get(SEARCH, params={"q": q}, timeout=10)
+            r.raise_for_status()
+        except requests.RequestException:
+            continue
+        for o in r.json().get("organizations", []):   # use ALL results, not just the top 5
+            if o["ein"] not in seen:
+                seen.add(o["ein"])
+                orgs.append(o)
+
+    def score(o: dict) -> float:
+        return difflib.SequenceMatcher(None, wanted, _norm(o["name"])).ratio()
 
     best = max(orgs, key=score, default=None)
-    if best is None or score(best) < 0.6:                 # too different -> treat as not found
+    if best is None or score(best) < 0.8:        # was 0.6, which let "Waterford Pto" through
         return None
-    return {"ein": str(best["ein"]).zfill(9),             # EINs are 9 digits, keep leading zeros
-            "matched_name": best["name"]}
-
+    return {"ein": str(best["ein"]).zfill(9), "matched_name": best["name"]}
 
 def propose_charities(intent: str) -> dict:
     """intent text -> {amount, cause, charities: [{proposed_name, why, ein, matched_name}], unresolved}"""
