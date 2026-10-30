@@ -20,7 +20,7 @@ with ONLY a JSON object of this shape:
   "amount": <number in USD, or null if the donor gave none>,
   "cause": "<short phrase, e.g. clean drinking water>",
   "charities": [
-    {"name": "<official name of a real US 501(c)(3) charity>", "why": "<one sentence>"}
+    {"name": "<exact legal name of a real US 501(c)(3), as registered with the IRS>", "why": "<one sentence>"}
   ]
 }
 Rules: propose exactly 3 charities. Use real, established US charities only.
