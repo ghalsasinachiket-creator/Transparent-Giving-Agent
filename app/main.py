@@ -5,7 +5,7 @@ load_dotenv()                                  # must run before paypal_client i
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-
+import agent
 import ledger
 from rules_engine import DonorRules, evaluate, fetch_org
 from paypal_client import create_donation_order, capture_order
@@ -99,3 +99,25 @@ def paypal_cancel():
 @app.get("/ledger")
 def read_ledger():
     return ledger.list_ledger()
+
+class ProposeReq(BaseModel):
+    intent: str               # e.g. "give $20 to a clean drinking water charity"
+
+@app.post("/propose")
+def propose(req: ProposeReq):
+    """Full pipeline: LLM proposes -> registry resolves -> rules engine decides.
+    Note the order: the LLM's output is only ever INPUT to evaluate()."""
+    try:
+        plan = agent.propose_charities(req.intent)
+    except Exception as e:                                # LLM down, bad key, bad JSON...
+        raise HTTPException(502, f"Agent failed: {e}")
+
+    cards = []
+    for c in plan["charities"]:
+        d = evaluate(fetch_org(c["ein"]), c["ein"], plan["amount"],
+                     ledger.month_total(), ledger.get_rules())
+        did = ledger.record_decision(c["ein"], c["matched_name"], plan["amount"], d)
+        cards.append({**c, "decision": ledger.get_decision(did)})
+
+    return {"cause": plan["cause"], "amount": plan["amount"],
+            "cards": cards, "unresolved": plan["unresolved"]}
