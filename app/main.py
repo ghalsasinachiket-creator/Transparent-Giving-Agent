@@ -10,6 +10,11 @@ import ledger
 from rules_engine import DonorRules, evaluate, fetch_org
 from paypal_client import create_donation_order, capture_order
 
+# 1. Add to the imports at the top
+import requests
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")   # becomes your Render URL later
 
 app = FastAPI(title="Transparent Giving Agent")
@@ -86,14 +91,18 @@ def donate(req: DonateReq):
 @app.get("/paypal/return")
 def paypal_return(token: str):
     """PayPal sends the donor here after approval; `token` is the order id."""
-    cap = capture_order(token)
+    try:
+        cap = capture_order(token)
+    except requests.RequestException:
+        return RedirectResponse("/?failed=1")
     if cap["status"] == "COMPLETED":
         ledger.mark_completed(token, cap["capture_id"])
-    return cap
+        return RedirectResponse(f"/?donated={cap['amount']}")
+    return RedirectResponse("/?failed=1")
 
 @app.get("/paypal/cancel")
 def paypal_cancel():
-    return {"status": "cancelled"}
+    return RedirectResponse("/?cancelled=1")
 
 
 @app.get("/ledger")
@@ -121,3 +130,6 @@ def propose(req: ProposeReq):
 
     return {"cause": plan["cause"], "amount": plan["amount"],
             "cards": cards, "unresolved": plan["unresolved"]}
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static")
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
